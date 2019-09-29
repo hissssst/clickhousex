@@ -63,7 +63,7 @@ defimpl DBConnection.Query, for: Clickhousex.Query do
     encoded_params = @codec.encode(query, query_part, params)
 
     HTTPRequest.new()
-    |> HTTPRequest.with_query_string_data(encoded_params)
+    |> HTTPRequest.with_post_data(encoded_params)
   end
 
   def decode(_query, result, _opts) do
