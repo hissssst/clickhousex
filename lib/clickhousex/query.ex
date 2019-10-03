@@ -16,7 +16,8 @@ defmodule Clickhousex.Query do
             type: :select,
             params: [],
             param_count: 0,
-            columns: []
+            columns: [],
+            external_data: []
 
   def new(statement) do
     %__MODULE__{statement: statement}
@@ -34,7 +35,7 @@ defimpl DBConnection.Query, for: Clickhousex.Query do
 
   @codec Application.get_env(:clickhousex, :codec, Clickhousex.Codec.JSON)
 
-  def parse(%{statement: statement} = query, _opts) do
+  def parse(%{statement: statement} = query, opts) do
     param_count =
       statement
       |> String.codepoints()
@@ -42,7 +43,7 @@ defimpl DBConnection.Query, for: Clickhousex.Query do
 
     query = %{query | type: query_type(statement)}
 
-    %{query | param_count: param_count}
+    %{query | param_count: param_count, external_data: opts[:external_data] || []}
   end
 
   def describe(query, _opts) do
@@ -63,7 +64,7 @@ defimpl DBConnection.Query, for: Clickhousex.Query do
     encoded_params = @codec.encode(query, query_part, params)
 
     HTTPRequest.new()
-    |> HTTPRequest.with_post_data(encoded_params)
+    |> HTTPRequest.with_query_string_data(encoded_params)
   end
 
   def decode(_query, result, _opts) do

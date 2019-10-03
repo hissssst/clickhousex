@@ -18,23 +18,34 @@ defmodule Clickhousex.HTTPClient do
   defp send_p(query, request, base_address, database, opts) do
     command = parse_command(query)
 
-    post_body =
+    query_data =
       case query.type do
         :select ->
-          [request.post_data, " FORMAT ", @codec.response_format]
+          [request.query_string_data, " FORMAT ", @codec.response_format]
 
         _ ->
-          [request.post_data]
+          [request.query_string_data]
       end
 
+    post_data =
+      case query.external_data do
+        [] -> request.post_data
+        data -> {:multipart, external_data_parts(data)}
+      end
+
+    params = %{
+      database: database,
+      query: IO.iodata_to_binary(query_data)
+    }
+
     http_opts =
-      Keyword.put(opts, :params, %{
-        database: database,
-        query: IO.iodata_to_binary(request.query_string_data)
-      })
+      case query.external_data do
+        [] -> Keyword.put(opts, :params, params)
+        data -> Keyword.put(opts, :params, Map.merge(params, external_data_params(data)))
+      end
 
     with {:ok, %{status_code: 200, body: body}} <-
-           HTTPoison.post(base_address, post_body, @req_headers, http_opts),
+           HTTPoison.post(base_address, post_data, @req_headers, http_opts),
          {:command, :selected} <- {:command, command},
          {:ok, %{column_names: column_names, rows: rows}} <- @codec.decode(body) do
       {command, column_names, rows}
@@ -56,5 +67,20 @@ defmodule Clickhousex.HTTPClient do
 
   defp parse_command(_) do
     :updated
+  end
+
+  defp external_data_parts(data) do
+    Enum.map(data, fn item ->
+      {item.name, item.data, {"form-data", [name: item.name, filename: item.name]}, []}
+    end)
+  end
+
+  defp external_data_params(data) do
+    Enum.reduce(data, %{}, fn param, params ->
+      Map.merge(params, %{
+        "#{param.name}_structure" => param.structure,
+        "#{param.name}_format" => param.format
+      })
+    end)
   end
 end
