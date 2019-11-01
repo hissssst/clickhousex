@@ -18,24 +18,19 @@ defmodule Clickhousex.HTTPClient do
   defp send_p(query, request, base_address, database, opts) do
     command = parse_command(query)
 
-    query_data =
+    post_data =
       case query.type do
         :select ->
-          [request.query_string_data, " FORMAT ", @codec.response_format]
+          query_part = query_part([request.post_data, " FORMAT ", @codec.response_format])
+          {:multipart, [query_part] ++ external_data_parts(query.external_data)}
 
         _ ->
-          [request.query_string_data]
-      end
-
-    post_data =
-      case query.external_data do
-        [] -> request.post_data
-        data -> {:multipart, external_data_parts(data)}
+          request.post_data
       end
 
     params = %{
       database: database,
-      query: IO.iodata_to_binary(query_data)
+      query: IO.iodata_to_binary(request.query_string_data)
     }
 
     http_opts =
@@ -67,6 +62,10 @@ defmodule Clickhousex.HTTPClient do
 
   defp parse_command(_) do
     :updated
+  end
+
+  defp query_part(query) do
+    {"query", IO.iodata_to_binary(query), {"form-data", [name: "query"]}, []}
   end
 
   defp external_data_parts(data) do
