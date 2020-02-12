@@ -4,23 +4,13 @@ defmodule Clickhousex.Codec.RowBinary do
   @behaviour Codec
 
   @impl Codec
-  def response_format do
-    "RowBinaryWithNamesAndTypes"
-  end
+  def response_format(), do: "RowBinaryWithNamesAndTypes"
 
   @impl Codec
-  def request_format do
-    "Values"
-  end
+  def request_format(), do: "Values"
 
   @impl Codec
   def encode(query, replacements, params) do
-    params =
-      Enum.map(params, fn
-        %DateTime{} = dt -> DateTime.to_unix(dt)
-        other -> other
-      end)
-
     Clickhousex.Codec.Values.encode(query, replacements, params)
   end
 
@@ -101,26 +91,21 @@ defmodule Clickhousex.Codec.RowBinary do
   defp to_type(<<"Nullable(", type::binary>>) do
     rest_type =
       type
-      |> String.replace_suffix(")", "")
+      |> String.trim_trailing(")")
       |> to_type()
 
     {:nullable, rest_type}
   end
 
   defp to_type(<<"FixedString(", rest::binary>>) do
-    case Integer.parse(rest) do
-      {length, rest} ->
-        rest
-        |> String.replace_suffix(")", "")
-
-        {:fixed_string, length}
-    end
+    {length, _} = Integer.parse(rest)
+    {:fixed_string, length}
   end
 
   defp to_type(<<"Array(", type::binary>>) do
     rest_type =
       type
-      |> String.replace_suffix(")", "")
+      |> String.trim_trailing(")")
       |> to_type()
 
     {:array, rest_type}

@@ -3,26 +3,33 @@ defmodule Clickhousex.Query do
   Query struct returned from a successfully prepared query.
   """
 
-  @type t :: %__MODULE__{
-          name: iodata,
-          type: :select | :insert | :alter | :create | :drop,
-          param_count: integer,
-          params: iodata | nil,
-          columns: [String.t()] | nil
-        }
+  @codec Application.get_env(:clickhousex, :codec, Clickhousex.Codec.JSON)
 
-  defstruct name: nil,
-            statement: "",
-            type: :select,
-            params: [],
-            param_count: 0,
-            columns: [],
-            external_data: []
+  @type t :: %__MODULE__{
+    name:        iodata,
+    type:        :select | :insert | :alter | :create | :drop,
+    param_count: integer,
+    params:      iodata | nil,
+    columns:     [String.t()] | nil,
+    codec:       Clickhousex.Codec.JSON | Clickhousex.Codec.RowBinary
+  }
+
+  defstruct [
+    name:          nil,
+    statement:     "",
+    type:          :select,
+    params:        [],
+    param_count:   0,
+    columns:       [],
+    external_data: [],
+    codec:         @codec
+  ]
 
   def new(statement) do
     %__MODULE__{statement: statement}
     |> DBConnection.Query.parse([])
   end
+
 end
 
 defimpl DBConnection.Query, for: Clickhousex.Query do
@@ -32,8 +39,6 @@ defimpl DBConnection.Query, for: Clickhousex.Query do
   @select_query_regex ~r/\bSELECT\b/i
   @insert_query_regex ~r/\bINSERT\b/i
   @alter_query_regex ~r/\bALTER\b/i
-
-  @codec Application.get_env(:clickhousex, :codec, Clickhousex.Codec.JSON)
 
   def parse(%{statement: statement} = query, opts) do
     param_count =
@@ -50,50 +55,43 @@ defimpl DBConnection.Query, for: Clickhousex.Query do
     query
   end
 
-  def encode(%{type: :insert} = query, params, _opts) do
+  def encode(%{type: :insert, codec: codec} = query, params, _opts) do
     {query_part, post_body_part} = do_parse(query)
-    encoded_params = @codec.encode(query, post_body_part, params)
+    encoded_params = codec.encode(query, post_body_part, params)
 
-    HTTPRequest.new()
-    |> HTTPRequest.with_query_string_data(query_part)
-    |> HTTPRequest.with_post_data(encoded_params)
+    %HTTPRequest{post_data: encoded_params, query_string_data: query_part}
   end
 
-  def encode(query, params, _opts) do
-    {query_part, _post_body_part} = do_parse(query)
-    encoded_params = @codec.encode(query, query_part, params)
-
-    HTTPRequest.new()
-    |> HTTPRequest.with_post_data(encoded_params)
+  def encode(%{codec: codec, statement: statement} = query, params, _opts) do
+    encoded_params = codec.encode(query, statement, params)
+    %HTTPRequest{post_data: encoded_params}
   end
 
   def decode(_query, result, _opts) do
     result
   end
 
-  defp do_parse(%{type: :insert, statement: statement}) do
-    with true <- Regex.match?(@values_regex, statement),
-         [fragment, substitutions] <- String.split(statement, @values_regex),
-         true <- String.contains?(substitutions, "?") do
-      {fragment <> " FORMAT #{@codec.request_format}", substitutions}
+  defp do_parse(%{statement: statement, codec: codec}) do
+    with(
+      true <- Regex.match?(@values_regex, statement),
+      [fragment, substitutions] <- String.split(statement, @values_regex),
+      true <- String.contains?(substitutions, "?")
+    ) do
+      {fragment <> " FORMAT #{codec.request_format()}", substitutions}
     else
-      _ ->
-        {statement, ""}
+      _ -> {statement, ""}
     end
   end
 
-  defp do_parse(%{statement: statement}) do
-    {statement, ""}
-  end
-
   defp query_type(statement) do
-    with {:select, false} <- {:select, Regex.match?(@select_query_regex, statement)},
-         {:insert, false} <- {:insert, Regex.match?(@insert_query_regex, statement)},
-         {:alter, false} <- {:alter, Regex.match?(@alter_query_regex, statement)} do
+    with(
+      {:select, false} <- {:select, Regex.match?(@select_query_regex, statement)},
+      {:insert, false} <- {:insert, Regex.match?(@insert_query_regex, statement)},
+      {:alter,  false} <- {:alter,  Regex.match?(@alter_query_regex,  statement)}
+    ) do
       :unknown
     else
-      {statement_type, true} ->
-        statement_type
+      {statement_type, true} -> statement_type
     end
   end
 end

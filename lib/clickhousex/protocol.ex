@@ -21,45 +21,42 @@ defmodule Clickhousex.Protocol do
   @ping_params DBConnection.Query.encode(@ping_query, [], [])
 
   @doc false
-  @spec connect(opts :: Keyword.t()) ::
-          {:ok, state}
-          | {:error, Exception.t()}
+  @spec connect(opts :: Keyword.t()) :: {:ok, state} | {:error, Exception.t()}
   def connect(opts) do
-    scheme = opts[:scheme] || :http
+    scheme   = opts[:scheme]   || :http
     hostname = opts[:hostname] || "localhost"
-    port = opts[:port] || 8123
+    port     = opts[:port]     || 8123
     database = opts[:database] || "default"
     username = opts[:username] || nil
     password = opts[:password] || nil
-    timeout = opts[:timeout] || Clickhousex.timeout()
+    timeout  = opts[:timeout]  || Clickhousex.timeout()
 
     base_address = build_base_address(scheme, hostname, port)
 
-    case Client.send(
-           @ping_query,
-           @ping_params,
-           base_address,
-           timeout,
-           username,
-           password,
-           database
-         ) do
+    Client.send(
+      @ping_query,
+      @ping_params,
+      base_address,
+      timeout,
+      username,
+      password,
+      database
+    )
+    |> case do
       {:selected, _, _} ->
-        {
-          :ok,
-          %__MODULE__{
-            conn_opts: [
-              scheme: scheme,
-              hostname: hostname,
-              port: port,
-              database: database,
-              username: username,
-              password: password,
-              timeout: timeout
-            ],
-            base_address: base_address
-          }
+        connection = %__MODULE__{
+          conn_opts: [
+            scheme:     scheme,
+            hostname:   hostname,
+            port:       port,
+            database:   database,
+            username:   username,
+            password:   password,
+            timeout:    timeout
+          ],
+          base_address: base_address
         }
+        {:ok, connection}
 
       resp ->
         resp
@@ -67,15 +64,13 @@ defmodule Clickhousex.Protocol do
   end
 
   @doc false
-  @spec disconnect(err :: Exception.t(), state) :: :ok
+  @spec disconnect(err :: Exception.t() | binary(), state) :: :ok
   def disconnect(_err, _state) do
     :ok
   end
 
   @doc false
-  @spec ping(state) ::
-          {:ok, state}
-          | {:disconnect, term, state}
+  @spec ping(state) :: {:ok, state} | {:disconnect, term, state}
   def ping(state) do
     case do_query(@ping_query, @ping_params, [], state) do
       {:ok, _, _, new_state} -> {:ok, new_state}
@@ -123,18 +118,16 @@ defmodule Clickhousex.Protocol do
   end
 
   defp do_query(query, params, _opts, state) do
-    base_address = state.base_address
-    username = state.conn_opts[:username]
-    password = state.conn_opts[:password]
-    timeout = state.conn_opts[:timeout]
-    database = state.conn_opts[:database]
+    %{base_address: base_address, conn_opts: conn_opts} = state
+    username = conn_opts[:username]
+    password = conn_opts[:password]
+    timeout  = conn_opts[:timeout]
+    database = conn_opts[:database]
 
-    res =
-      query
-      |> Client.send(params, base_address, timeout, username, password, database)
-      |> handle_errors()
-
-    case res do
+    query
+    |> Client.send(params, base_address, timeout, username, password, database)
+    |> handle_errors()
+    |> case do
       {:error, %Error{code: :connection_exception} = reason} ->
         {:disconnect, reason, state}
 
@@ -142,43 +135,22 @@ defmodule Clickhousex.Protocol do
         {:error, reason, state}
 
       {:selected, columns, rows} ->
-        {
-          :ok,
-          query,
-          %Clickhousex.Result{
-            command: :selected,
-            columns: columns,
-            rows: rows,
-            num_rows: Enum.count(rows)
-          },
-          state
+        result = %Clickhousex.Result{
+          command:  :selected,
+          columns:  columns,
+          rows:     rows,
+          num_rows: Enum.count(rows)
         }
+        {:ok, query, result, state}
 
       {:updated, count} ->
-        {
-          :ok,
-          query,
-          %Clickhousex.Result{
-            command: :updated,
-            columns: ["count"],
-            rows: [[count]],
-            num_rows: 1
-          },
-          state
+        result = %Clickhousex.Result{
+          command:  :updated,
+          columns:  ["count"],
+          rows:     [[count]],
+          num_rows: 1
         }
-
-      {command, columns, rows} ->
-        {
-          :ok,
-          query,
-          %Clickhousex.Result{
-            command: command,
-            columns: columns,
-            rows: rows,
-            num_rows: Enum.count(rows)
-          },
-          state
-        }
+        {:ok, query, result, state}
     end
   end
 
@@ -195,10 +167,6 @@ defmodule Clickhousex.Protocol do
   def handle_fetch(_query, _cursor, _opts, state) do
     {:error, :cursors_not_supported, state}
   end
-
-  @doc false
-  defp handle_errors({:error, reason}), do: {:error, Error.exception(reason)}
-  defp handle_errors(term), do: term
 
   @doc false
   @spec handle_begin(opts :: Keyword.t(), state) :: {:ok, result, state}
@@ -231,6 +199,9 @@ defmodule Clickhousex.Protocol do
   end
 
   ## Private functions
+
+  defp handle_errors({:error, reason}), do: {:error, Error.exception(reason)}
+  defp handle_errors(term), do: term
 
   defp build_base_address(scheme, hostname, port) do
     "#{Atom.to_string(scheme)}://#{hostname}:#{port}/"
